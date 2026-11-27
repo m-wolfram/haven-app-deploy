@@ -1,0 +1,23 @@
+# Haven chat. This file alone: local run, Haven serves HTTPS itself with a self-signed
+# certificate on https://localhost:3000. Behind nginx: add docker-compose.own-nginx.yml or
+# docker-compose.external-nginx.yml through COMPOSE_FILE in .env (see README)
+name: haven
+
+services:
+  haven:
+    image: ghcr.io/ancsemi/haven:4.30.0
+    volumes:
+      - haven_data:/data
+    ports:
+      # Local run; behind nginx: the SSH tunnel only (first admin registration, access bypassing nginx)
+      - "127.0.0.1:${HAVEN_PORT:-3000}:3000"
+    mem_limit: 512m
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  haven_data:

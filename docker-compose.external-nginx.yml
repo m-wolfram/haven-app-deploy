@@ -1,0 +1,25 @@
+# Behind nginx of another compose project on the same server: it reads nginx/*.conf of this
+# project and issues the certificate for HAVEN_DOMAIN. Haven joins its network, nginx reaches the
+# container by the name haven
+services:
+  haven:
+    environment:
+      FORCE_HTTP: "true"  # plain HTTP on 3000, TLS is terminated by nginx
+      PUBLIC_URL: https://${HAVEN_DOMAIN:?set HAVEN_DOMAIN in .env}
+    networks:
+      - proxy
+
+  # Run explicitly to render the site for an nginx outside this project.
+  nginx-config:
+    image: nginx:1.30-alpine
+    profiles: [tools]
+    entrypoint: ["/bin/sh", "-c", "envsubst '$$HAVEN_DOMAIN' < /templates/haven.conf.template"]
+    environment:
+      HAVEN_DOMAIN: ${HAVEN_DOMAIN:?set HAVEN_DOMAIN in .env}
+    volumes:
+      - ./nginx/haven.conf.template:/templates/haven.conf.template:ro
+
+networks:
+  proxy:
+    name: ${PROXY_NETWORK:?set PROXY_NETWORK in .env (the network of the nginx project)}
+    external: true

@@ -1,0 +1,80 @@
+# Own nginx on 80/443 and a Let's Encrypt certificate for HAVEN_DOMAIN: a server with nothing else
+# on these ports. The nginx image renders the Haven site from its template at startup.
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  haven:
+    environment:
+      FORCE_HTTP: "true"  # plain HTTP on 3000, TLS is terminated by nginx
+      PUBLIC_URL: https://${HAVEN_DOMAIN:?set HAVEN_DOMAIN in .env}
+
+  nginx:
+    image: nginx:1.30-alpine
+    environment:
+      HAVEN_DOMAIN: ${HAVEN_DOMAIN:?set HAVEN_DOMAIN in .env}
+      NGINX_ENVSUBST_FILTER: '^HAVEN_DOMAIN$$'
+    # Every minute checks the certificate files and reloads the config when certbot issued or
+    # renewed one
+    command:
+      - /bin/sh
+      - -c
+      - |
+        certs() { stat -L -c '%n %Y' /etc/letsencrypt/live/*/fullchain.pem 2>/dev/null || true; }
+        last=$$(certs)
+        while :; do
+          sleep 60
+          now=$$(certs)
+          if [ -n "$$now" ] && [ "$$now" != "$$last" ] && nginx -s reload; then last=$$now; fi
+        done &
+        exec /docker-entrypoint.sh nginx -g 'daemon off;'
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./own-nginx/conf.d/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/haven.conf.template:/etc/nginx/templates/haven.conf.template:ro
+      - letsencrypt:/etc/letsencrypt:ro
+      - certbot_www:/var/www/certbot:ro
+    # Waits only for a certificate file: without one nginx does not start
+    depends_on:
+      cert-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    logging: *logging
+
+  # A temporary self-signed certificate if there is none yet
+  cert-init:
+    image: certbot/certbot:v5.9.0
+    entrypoint: ["/bin/sh", "/scripts/cert-init.sh"]
+    environment:
+      HAVEN_DOMAIN: ${HAVEN_DOMAIN}
+    volumes:
+      - letsencrypt:/etc/letsencrypt
+      - ./own-nginx/certbot:/scripts:ro
+    restart: "no"
+    logging: *logging
+
+  # Let's Encrypt certificate in place of the temporary one, then renewal
+  certbot:
+    image: certbot/certbot:v5.9.0
+    entrypoint: ["/bin/sh", "/scripts/certbot.sh"]
+    environment:
+      HAVEN_DOMAIN: ${HAVEN_DOMAIN}
+      LETSENCRYPT_EMAIL: ${LETSENCRYPT_EMAIL:-}
+    volumes:
+      - letsencrypt:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+      - ./own-nginx/certbot:/scripts:ro
+    depends_on:
+      - nginx
+    restart: unless-stopped
+    logging: *logging
+
+volumes:
+  letsencrypt:
+  certbot_www:

@@ -1,0 +1,58 @@
+# Haven site template for the bundled or an external nginx.
+# Render HAVEN_DOMAIN only, leaving nginx variables intact.
+# Expects Docker DNS and the certificate in /etc/letsencrypt/live/<domain>/.
+
+# WebSocket (Socket.io): upgrade when asked, otherwise a normal connection
+map $http_upgrade $haven_connection {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${HAVEN_DOMAIN};
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${HAVEN_DOMAIN};
+
+    ssl_certificate /etc/letsencrypt/live/${HAVEN_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${HAVEN_DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+
+    add_header Strict-Transport-Security "max-age=31536000" always;
+
+    # Haven default upload cap is 25 MB (Settings > Admin): raise both together
+    client_max_body_size 25m;
+
+    location / {
+        # Through a variable: nginx starts even while haven is down (502 until it is up)
+        set $haven http://haven:3000;
+        proxy_pass $haven;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $haven_connection;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        # nginx is the first proxy: the client's header is replaced with the real IP
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # Socket.io connections stay open for a long time
+        proxy_read_timeout 1d;
+        proxy_send_timeout 1d;
+    }
+}

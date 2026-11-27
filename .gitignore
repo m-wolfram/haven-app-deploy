@@ -1,0 +1,6 @@
+# Local settings (README, "Режимы")
+.env
+
+# Generated configuration for an external nginx
+/nginx/haven.conf
+/nginx/haven.conf.tmp

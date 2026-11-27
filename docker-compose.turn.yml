@@ -1,0 +1,61 @@
+# TURN relay (coturn) for voice and screen share between different networks. Added on top of
+# an nginx mode through COMPOSE_FILE (README, "Голос через интернет"). Haven hands browsers
+# time-limited credentials signed with TURN_SECRET, coturn checks them with the same secret
+
+services:
+  haven:
+    environment:
+      TURN_URL: turn:${HAVEN_DOMAIN:?set HAVEN_DOMAIN in .env}:3478
+      TURN_SECRET: ${TURN_SECRET:?set TURN_SECRET in .env}
+
+  coturn:
+    image: ghcr.io/coturn/coturn:4.9
+    # Host network: a relay port range through Docker port publishing is slow and needs one
+    # rule per port. TURN_IP is the public IP held on an interface of the server (otherwise add
+    # --external-ip); listening and relaying only on it, not on Docker bridges or loopback
+    network_mode: host
+    # The image's entrypoint runs each argument through `eval "echo …"`, which eats -n
+    entrypoint: [turnserver]
+    command:
+      - -n  # no config file, everything is here
+      - --listening-ip=${TURN_IP:?set TURN_IP in .env (the public IP of the server)}
+      - --relay-ip=${TURN_IP}
+      - --listening-port=3478
+      - --no-tls
+      - --no-dtls
+      - --realm=${HAVEN_DOMAIN}
+      - --use-auth-secret
+      - --static-auth-secret=${TURN_SECRET}
+      # One relay port per allocation, so the range is the total limit (no --total-quota).
+      # Relay-only calls take n*(n-1) allocations for n people in a channel
+      - --min-port=${TURN_MIN_PORT:-49160}
+      - --max-port=${TURN_MAX_PORT:-49200}
+      # Per account: n-1 allocations in a channel of n, so up to 13 people
+      - --user-quota=12
+      - --fingerprint
+      - --no-cli
+      - --no-multicast-peers
+      # The relay shares the host network: no TCP relay and no private, loopback, link-local
+      # and reserved peers, so it cannot reach the host's services or Docker networks
+      - --no-tcp-relay
+      - --denied-peer-ip=0.0.0.0-0.255.255.255
+      - --denied-peer-ip=10.0.0.0-10.255.255.255
+      - --denied-peer-ip=100.64.0.0-100.127.255.255
+      - --denied-peer-ip=127.0.0.0-127.255.255.255
+      - --denied-peer-ip=169.254.0.0-169.254.255.255
+      - --denied-peer-ip=172.16.0.0-172.31.255.255
+      - --denied-peer-ip=192.0.0.0-192.0.0.255
+      - --denied-peer-ip=192.168.0.0-192.168.255.255
+      - --denied-peer-ip=198.18.0.0-198.19.255.255
+      - --denied-peer-ip=240.0.0.0-255.255.255.255
+      - --denied-peer-ip=::1
+      - --denied-peer-ip=fc00::-fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+      - --denied-peer-ip=fe80::-febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+      - --log-file=stdout
+    mem_limit: 256m
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
