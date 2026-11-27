@@ -2,29 +2,18 @@
 
 This repository provides Docker Compose configurations for running [Haven](https://github.com/ancsemi/Haven) with the official `ghcr.io/ancsemi/haven` image. It supports local access, a bundled nginx with Let's Encrypt, or an existing nginx reverse proxy. An optional coturn service relays calls between clients on different networks.
 
-## Setup
+## Quick start
 
-Docker and Docker Compose are required. Copy the example settings to a local `.env` file.
+With Docker and Docker Compose installed, run the following from the repository directory.
 
 ```bash
 cp .env.example .env
-```
-
-Select a deployment mode with `COMPOSE_FILE`. Separate file names with a colon on Linux and macOS or a semicolon on Windows.
-
-| Mode | `COMPOSE_FILE` | Address |
-|---|---|---|
-| Local | `docker-compose.yml` | `https://localhost:3000` |
-| Bundled nginx | `docker-compose.yml:docker-compose.own-nginx.yml` | `https://<HAVEN_DOMAIN>` |
-| External nginx | `docker-compose.yml:docker-compose.external-nginx.yml` | `https://<HAVEN_DOMAIN>` |
-
-## Local access
-
-```bash
 docker compose up -d haven
 ```
 
-Haven serves `https://localhost:3000` with a self-signed certificate. The host port defaults to 3000 and can be set with `HAVEN_PORT`. It is bound to `127.0.0.1`.
+Open `https://localhost:3000`. The local endpoint uses a self-signed certificate and is bound to `127.0.0.1`. The port can be changed with `HAVEN_PORT`.
+
+For access over a domain, use [Bundled nginx](#bundled-nginx) if ports 80 and 443 are free, or [External nginx](#external-nginx) if an existing proxy already serves those ports. In `COMPOSE_FILE`, separate file names with a colon on Linux and macOS or a semicolon on Windows.
 
 ## Initial account setup
 
@@ -40,11 +29,16 @@ Under **Settings → Sign-ups**, enable **Require invite token** to restrict reg
 
 ## Bundled nginx
 
-This mode requires TCP ports 80 and 443 to be available on the server.
+This mode requires TCP ports 80 and 443 to be available on the server. Copy the following settings into `.env` and replace the example hostname. `LETSENCRYPT_EMAIL` is optional.
 
-1. Set `COMPOSE_FILE` and `HAVEN_DOMAIN` in `.env`. Use a hostname such as `chat.example.com` without the scheme. `LETSENCRYPT_EMAIL` is optional.
-2. Point an `A` record at the server's public IPv4 address. Allow inbound TCP traffic on ports 80 and 443.
-3. Start only Haven with `docker compose up -d haven` and [create the administrator account](#initial-account-setup). Then start the full stack.
+```dotenv
+COMPOSE_FILE=docker-compose.yml:docker-compose.own-nginx.yml
+HAVEN_DOMAIN=chat.example.com
+```
+
+1. Point an `A` record at the server's public IPv4 address. Allow inbound TCP traffic on ports 80 and 443.
+2. Start only Haven with `docker compose up -d haven` and [create the administrator account](#initial-account-setup).
+3. Start the full stack and check the certificate issuance log.
 
 ```bash
 docker compose up -d
@@ -55,19 +49,26 @@ nginx renders the site configuration from the [template](nginx/haven.conf.templa
 
 ## External nginx
 
-The existing nginx must share the Docker network specified by `PROXY_NETWORK`. It reaches Haven at `haven:3000` using Docker DNS (`resolver 127.0.0.11`). Set up DNS and issue the certificate for `HAVEN_DOMAIN` through the external proxy setup. The configuration expects the certificate under `/etc/letsencrypt/live/<domain>/`.
+Use this mode when an existing Docker-based nginx serves ports 80 and 443. Set up DNS and issue the certificate first. The generated configuration expects the certificate in `/etc/letsencrypt/live/<domain>/`.
 
-1. Set `COMPOSE_FILE`, `HAVEN_DOMAIN`, and `PROXY_NETWORK` in `.env`.
-2. Start Haven with `docker compose up -d haven` and [create the administrator account](#initial-account-setup).
-3. Render the local nginx configuration.
+Copy the following settings into `.env`. Replace the example hostname and network name. The network must already exist and be shared with nginx.
+
+```dotenv
+COMPOSE_FILE=docker-compose.yml:docker-compose.external-nginx.yml
+HAVEN_DOMAIN=chat.example.com
+PROXY_NETWORK=reverse-proxy
+```
+
+1. Start Haven with `docker compose up -d haven` and [create the administrator account](#initial-account-setup).
+2. Render the nginx configuration.
 
    ```bash
    docker compose run --rm -T nginx-config > nginx/haven.conf.tmp &&
      mv nginx/haven.conf.tmp nginx/haven.conf
    ```
 
-4. Mount the `nginx/` directory into the external nginx and include `haven.conf` with an `include` directive. Mounting the directory allows nginx to see replacements of the generated file.
-5. From the external proxy's Compose project, test and reload the configuration. This example assumes the service is named `nginx`.
+3. Mount the `nginx/` directory into the external nginx and include `haven.conf`. A directory mount lets nginx see the new file when it is regenerated. The proxy uses Docker DNS (`resolver 127.0.0.11`) to reach `haven:3000`.
+4. From the external proxy's Compose project, test and reload the configuration. This example assumes the service is named `nginx`.
 
    ```bash
    docker compose exec nginx nginx -t &&
